@@ -50,7 +50,9 @@ def fetch_archived_bulletin(run_date, run_hour: int, timeout: int = 30):
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as e:
-        logger.debug("archived bulletin unavailable date=%s hour=%d: %s", run_date, run_hour, e)
+        # INFO, not DEBUG: this needs to be visible in a normal run's log -
+        # a wrong archive URL pattern would otherwise fail completely silently.
+        logger.info("archived bulletin unavailable url=%s error=%s", url, e)
         return None
 
 
@@ -71,43 +73,52 @@ def _nearest_run_before(close_time: datetime):
     return run_date, run_hour
 
 
-def _evaluate_market(market: dict, station: str, sigma_multiplier: float) -> dict | None:
+def _evaluate_market(market: dict, station: str, sigma_multiplier: float) -> tuple:
     """
     Shared per-market evaluation used by both the historical-tier and
-    live-tier (fallback) fetch paths, so that logic isn't duplicated.
-    Returns a result dict, or None if this market can't be evaluated.
+    live-tier (fallback) fetch paths.
+
+    Returns (result_dict_or_None, rejection_reason_or_None) - the reason
+    is always populated when the result is None, so callers can tally
+    WHY markets were rejected instead of only knowing that they were.
+    This funnel visibility is what pinpointed the historical-tier vs.
+    live-tier issue earlier, and is needed again here to find the next
+    bottleneck rather than guessing at it.
     """
     result = market.get("result")
     if result not in ("yes", "no"):
-        return None  # skip void/unsettled
+        return None, f"result_field_not_yes_or_no (was: {result!r})"
 
     threshold = extract_threshold(market)
     if threshold is None:
-        return None
+        return None, (
+            f"extract_threshold_failed (strike_type={market.get('strike_type')!r}, "
+            f"floor_strike={market.get('floor_strike')!r}, cap_strike={market.get('cap_strike')!r})"
+        )
 
     close_time_str = market.get("close_time")
     if not close_time_str:
-        return None
+        return None, "no_close_time_field"
     try:
         close_time = datetime.fromisoformat(close_time_str.replace("Z", "+00:00"))
     except ValueError:
-        return None
+        return None, f"close_time_unparseable ({close_time_str!r})"
 
     run_date, run_hour = _nearest_run_before(close_time)
     bulletin = fetch_archived_bulletin(run_date, run_hour)
     if bulletin is None:
-        return None
+        return None, f"archived_bulletin_unavailable (run={run_date}T{run_hour:02d}Z)"
 
     parsed = nbm.parse_station_maxt(bulletin, station)
     if parsed is None:
-        return None
+        return None, f"nbm_parse_failed_for_station (station={station}, run={run_date}T{run_hour:02d}Z)"
 
     run_dt = datetime(run_date.year, run_date.month, run_date.day, run_hour, tzinfo=timezone.utc)
     target_hour = int((close_time - run_dt).total_seconds() // 3600)
 
     pct = nbm.get_forecast_for_target_hour(parsed, target_hour)
     if pct is None:
-        return None
+        return None, f"no_forecast_at_target_hour (target_hour={target_hour})"
 
     if threshold["kind"] == "single":
         model_prob = probability.probability_of_exceeding(pct, threshold["value"], sigma_multiplier)
@@ -122,7 +133,7 @@ def _evaluate_market(market: dict, station: str, sigma_multiplier: float) -> dic
         "model_prob": model_prob,
         "actual": actual,
         "close_time": close_time_str,
-    }
+    }, None
 
 
 def backtest_city(
@@ -144,6 +155,13 @@ def backtest_city(
     """
     results = []
     source_used = None
+    rejection_counts = {}
+
+    def _tally(evaluated, reason):
+        if evaluated:
+            results.append(evaluated)
+        else:
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
     # --- Try the historical tier first ---------------------------------------
     cursor = None
@@ -172,9 +190,8 @@ def backtest_city(
         source_used = "historical"
         for market in markets:
             fetched += 1
-            evaluated = _evaluate_market(market, station, sigma_multiplier)
-            if evaluated:
-                results.append(evaluated)
+            evaluated, reason = _evaluate_market(market, station, sigma_multiplier)
+            _tally(evaluated, reason)
 
         cursor = page.get("cursor")
         if not cursor:
@@ -196,13 +213,28 @@ def backtest_city(
                 len(recent_markets), series_prefix,
             )
         for market in recent_markets[:max_markets]:
-            evaluated = _evaluate_market(market, station, sigma_multiplier)
-            if evaluated:
-                results.append(evaluated)
+            evaluated, reason = _evaluate_market(market, station, sigma_multiplier)
+            _tally(evaluated, reason)
+
+    if rejection_counts:
+        collapsed = _collapse_rejection_reasons(rejection_counts)
+        logger.info("backtest_city: rejection funnel for series=%s: %s", series_prefix, collapsed)
 
     summary = _summarize(results)
     summary["source_used"] = source_used
+    summary["rejection_funnel"] = _collapse_rejection_reasons(rejection_counts)
     return summary
+
+
+def _collapse_rejection_reasons(rejection_counts: dict) -> dict:
+    """Collapses detailed per-reason counts down to their category (the
+    part before the parenthetical detail) for a compact summary."""
+    from collections import Counter
+    collapsed = Counter()
+    for reason, count in rejection_counts.items():
+        category = reason.split(" (")[0]
+        collapsed[category] += count
+    return dict(collapsed)
 
 
 def _summarize(results: list) -> dict:
@@ -234,6 +266,12 @@ def format_report(city: str, summary: dict) -> str:
         lines.append("No usable historical markets found (missing archive data, "
                      "settled results, or strike info). Try a different city or "
                      "check that historical NBM archive coverage exists for this period.")
+        funnel = summary.get("rejection_funnel")
+        if funnel:
+            lines.append("")
+            lines.append("Why markets were rejected (this tells you exactly where to look):")
+            for reason, count in sorted(funnel.items(), key=lambda x: -x[1]):
+                lines.append(f"  - {reason}: {count}")
         return "\n".join(lines)
 
     lines.append(f"Markets backtested: {summary['n']}")
