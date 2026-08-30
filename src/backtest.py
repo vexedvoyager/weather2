@@ -71,6 +71,60 @@ def _nearest_run_before(close_time: datetime):
     return run_date, run_hour
 
 
+def _evaluate_market(market: dict, station: str, sigma_multiplier: float) -> dict | None:
+    """
+    Shared per-market evaluation used by both the historical-tier and
+    live-tier (fallback) fetch paths, so that logic isn't duplicated.
+    Returns a result dict, or None if this market can't be evaluated.
+    """
+    result = market.get("result")
+    if result not in ("yes", "no"):
+        return None  # skip void/unsettled
+
+    threshold = extract_threshold(market)
+    if threshold is None:
+        return None
+
+    close_time_str = market.get("close_time")
+    if not close_time_str:
+        return None
+    try:
+        close_time = datetime.fromisoformat(close_time_str.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    run_date, run_hour = _nearest_run_before(close_time)
+    bulletin = fetch_archived_bulletin(run_date, run_hour)
+    if bulletin is None:
+        return None
+
+    parsed = nbm.parse_station_maxt(bulletin, station)
+    if parsed is None:
+        return None
+
+    run_dt = datetime(run_date.year, run_date.month, run_date.day, run_hour, tzinfo=timezone.utc)
+    target_hour = int((close_time - run_dt).total_seconds() // 3600)
+
+    pct = nbm.get_forecast_for_target_hour(parsed, target_hour)
+    if pct is None:
+        return None
+
+    if threshold["kind"] == "single":
+        model_prob = probability.probability_of_exceeding(pct, threshold["value"], sigma_multiplier)
+    else:
+        model_prob = probability.probability_within_range(
+            pct, threshold["floor"], threshold["cap"], sigma_multiplier
+        )
+
+    actual = 1.0 if result == "yes" else 0.0
+    return {
+        "ticker": market.get("ticker"),
+        "model_prob": model_prob,
+        "actual": actual,
+        "close_time": close_time_str,
+    }
+
+
 def backtest_city(
     client: KalshiClient, series_prefix: str, station: str,
     sigma_multiplier: float, max_markets: int = 200,
@@ -78,80 +132,77 @@ def backtest_city(
     """
     Runs the backtest for one city's series. Returns a report dict with
     per-market predictions plus summary statistics.
+
+    Tries Kalshi's /historical/markets endpoint first. Kalshi partitions
+    data into "live" and "historical" tiers with a time-based cutoff
+    (see GET /historical/cutoff in their docs) - daily-settling weather
+    markets may not have aged past that cutoff yet, in which case
+    /historical/markets legitimately returns nothing, not an error. If
+    that happens, this falls back to the regular /markets endpoint
+    filtered to a terminal (finalized) status, which covers recently
+    settled markets still in the "live" tier.
     """
     results = []
+    source_used = None
+
+    # --- Try the historical tier first ---------------------------------------
     cursor = None
     fetched = 0
-
     while fetched < max_markets:
         try:
             page = client.get_historical_markets(
                 series_prefix, limit=min(100, max_markets - fetched), cursor=cursor
             )
         except Exception as e:
-            logger.warning("backtest_city: could not fetch historical markets for %s: %s", series_prefix, e)
+            logger.warning("backtest_city: /historical/markets call failed for %s: %s", series_prefix, e)
             break
 
         markets = page.get("markets", [])
         if not markets:
+            if fetched == 0:
+                logger.info(
+                    "backtest_city: /historical/markets returned ZERO markets for "
+                    "series=%s (succeeded, not an error - likely means these "
+                    "markets haven't aged past Kalshi's historical-tier cutoff "
+                    "yet). Falling back to /markets with a finalized-status filter.",
+                    series_prefix,
+                )
             break
 
+        source_used = "historical"
         for market in markets:
             fetched += 1
-            result = market.get("result")
-            if result not in ("yes", "no"):
-                continue  # skip void/unsettled
-
-            threshold = extract_threshold(market)
-            if threshold is None:
-                continue
-
-            close_time_str = market.get("close_time")
-            if not close_time_str:
-                continue
-            try:
-                close_time = datetime.fromisoformat(close_time_str.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-
-            run_date, run_hour = _nearest_run_before(close_time)
-            bulletin = fetch_archived_bulletin(run_date, run_hour)
-            if bulletin is None:
-                continue
-
-            parsed = nbm.parse_station_maxt(bulletin, station)
-            if parsed is None:
-                continue
-
-            run_dt = datetime(run_date.year, run_date.month, run_date.day, run_hour, tzinfo=timezone.utc)
-            target_hour = int((close_time - run_dt).total_seconds() // 3600)
-
-            pct = nbm.get_forecast_for_target_hour(parsed, target_hour)
-            if pct is None:
-                continue
-
-            if threshold["kind"] == "single":
-                model_prob = probability.probability_of_exceeding(
-                    pct, threshold["value"], sigma_multiplier
-                )
-            else:
-                model_prob = probability.probability_within_range(
-                    pct, threshold["floor"], threshold["cap"], sigma_multiplier
-                )
-
-            actual = 1.0 if result == "yes" else 0.0
-            results.append({
-                "ticker": market.get("ticker"),
-                "model_prob": model_prob,
-                "actual": actual,
-                "close_time": close_time_str,
-            })
+            evaluated = _evaluate_market(market, station, sigma_multiplier)
+            if evaluated:
+                results.append(evaluated)
 
         cursor = page.get("cursor")
         if not cursor:
             break
 
-    return _summarize(results)
+    # --- Fallback: recently-settled markets still in the "live" tier ---------
+    if source_used is None:
+        try:
+            recent_markets = client.get_markets_by_series(series_prefix, status="finalized")
+        except Exception as e:
+            logger.warning("backtest_city: fallback /markets?status=finalized failed for %s: %s",
+                           series_prefix, e)
+            recent_markets = []
+
+        if recent_markets:
+            source_used = "live (finalized)"
+            logger.info(
+                "backtest_city: fallback found %d finalized markets for series=%s",
+                len(recent_markets), series_prefix,
+            )
+        for market in recent_markets[:max_markets]:
+            evaluated = _evaluate_market(market, station, sigma_multiplier)
+            if evaluated:
+                results.append(evaluated)
+
+    summary = _summarize(results)
+    summary["source_used"] = source_used
+    return summary
 
 
 def _summarize(results: list) -> dict:
@@ -175,6 +226,10 @@ def _summarize(results: list) -> dict:
 
 def format_report(city: str, summary: dict) -> str:
     lines = [f"=== Backtest: {city} ==="]
+    source = summary.get("source_used")
+    if source:
+        lines.append(f"Data source: {source}")
+
     if summary["n"] == 0:
         lines.append("No usable historical markets found (missing archive data, "
                      "settled results, or strike info). Try a different city or "
