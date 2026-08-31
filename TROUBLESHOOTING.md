@@ -5,7 +5,7 @@ read what it means, and what (if anything) to do.
 
 ---
 
-### I don't see all four workflows in the Actions tab
+### I don't see all three workflows in the Actions tab
 
 **What it means:** most likely, the `.github` folder didn't upload —
 files/folders starting with a dot are hidden by default on most
@@ -75,8 +75,8 @@ understanding why before the next trading day.
 **What it means:** the scheduled GitHub Action didn't run, or ran and
 failed before finishing.
 
-**What to do:** click the **Actions** tab in your repo → **Scan and
-Trade** → look for a run with a red ✗. Click it to see the error message
+**What to do:** click the **Actions** tab in your repo → **Price
+Check** or **Forecast Refresh** → look for a run with a red ✗. Click it to see the error message
 near the bottom of the log. Common causes: a typo in a GitHub secret
 (re-check Part 3 of `QUICKSTART.md`), or Kalshi's site being briefly
 unavailable — the latter usually resolves itself by the next scheduled run.
@@ -106,32 +106,6 @@ several days. If it stays at 0 while "New positions opened" is greater
 than 0 for more than a few days, something may be wrong with settlement
 timing — feel free to share the daily summary text and I can help
 diagnose it.
-
----
-
-### Backtest issue says "No usable historical markets found"
-
-**What it means:** either Kalshi's historical data for that city's series
-wasn't available, or NOAA's archived weather forecast data didn't cover
-the same time period. This is a data-availability limitation, not
-necessarily a sign anything is broken.
-
-**What to do:** try a different city, or treat paper-trading results as
-your primary source of truth for now — the backtest is a bonus early
-signal, not the final word.
-
----
-
-### Backtest says "Model does NOT beat the naive base-rate guess"
-
-**What it means:** on the historical sample tested, simply guessing the
-long-run average outcome would have scored better than the bot's actual
-forecasts. This is exactly the warning sign that led to a full rebuild
-of the paid product this project drew on — worth taking seriously.
-
-**What to do:** don't go live yet. This is useful, if disappointing,
-information gained in days instead of months. Feel free to share the
-backtest numbers and I can help think through what might be off.
 
 ---
 
