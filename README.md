@@ -40,6 +40,11 @@ forward.
   schedule would hit on a private repo.
 - **429 rate-limit handling** with exponential backoff, per Kalshi's
   documented token-bucket limiter.
+- **No backtest feature** — an earlier version of v2.0 included one, but
+  it was removed after confirming NOAA doesn't keep more than about a
+  week of the needed forecast archive available anywhere for free. See
+  `IMPROVEMENTS.md` for the full reasoning. Paper trading is the source
+  of truth for validation now.
 
 ---
 
@@ -64,7 +69,6 @@ a GitHub Issue you can read without touching any code.
 | Know what this can't do yet, or what's unproven | [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) |
 | See what's planned for the next version | [`IMPROVEMENTS.md`](IMPROVEMENTS.md) |
 | Adjust cities, budget, or risk settings | `config.yaml` (every line has a comment) |
-| Run a quick historical sanity-check before going live | See "Running the backtest" in `QUICKSTART.md` |
 
 ---
 
@@ -78,8 +82,6 @@ a GitHub Issue you can read without touching any code.
   including a quick-glance P&L sparkline
 - **Same-day alerts** (a separate GitHub Issue) if a position mismatch or
   the daily loss limit occurs
-- **A backtest tool** you can run on demand, checking the forecasting
-  logic against real historical Kalshi markets
 - **48 automated tests**, including dedicated regression coverage for
   the fixed-width column parsing bug found while building this version
 
