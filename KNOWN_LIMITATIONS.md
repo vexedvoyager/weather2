@@ -54,11 +54,17 @@ header row. This is covered by dedicated regression tests in
   intervals. Real run frequency may be lower than configured, especially
   during high platform load. See `IMPROVEMENTS.md` for the plan if this
   proves to be a persistent problem.
-- **The backtest has real limits**: it uses NOAA's public historical
-  archive, which may have gaps; it can't reconstruct spread/volume/
-  order-book conditions as they existed at decision time, only whether
-  the probability model would have been well-calibrated against what
-  actually happened.
+- **No backtest feature.** An early version of v2.0 included one, using
+  archived NOAA forecast bulletins to grade the model against historical
+  settled markets. It was removed after confirming NOAA doesn't keep
+  more than about a week of that specific archive available anywhere
+  for free (their own long-term text-bulletin archive was discontinued;
+  the closest available alternative, a university-run archive, only
+  guarantees roughly 7 days of retention). Paper trading is the source
+  of truth for validation going forward — slower to build confidence
+  than a deep historical backtest would have been, but the data is
+  genuinely yours and accumulates correctly. See `IMPROVEMENTS.md` for
+  the full reasoning and what a proper fix would require.
 - **Single forecast source.** Only NBM is used (deliberately — a
   hand-rolled multi-model ensemble was the exact approach that scored
   worse than a naive base-rate guess in the research this project drew on).
@@ -87,6 +93,4 @@ header row. This is covered by dedicated regression tests in
 See `TROUBLESHOOTING.md` for a full phrase-by-phrase guide. The short version:
 - Any `POSITION MISMATCH` alert — investigate before trusting that day's numbers
 - A daily loss limit alert — expected to occasionally happen
-- A backtest that doesn't beat the naive base rate — treat as a serious
-  signal to pause before going live
 - `nbm_parse` warnings appearing on every single run — worth investigating
