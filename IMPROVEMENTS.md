@@ -63,6 +63,40 @@ logic in the bot and the one most recently changed.
 
 ---
 
+### 5. (Optional, low priority) Proper historical backtesting via GRIB2
+
+**Why:** the original backtest feature was removed (see "Decisions" below)
+because the only available forecast archive turned out to cover roughly
+7 days, not the weeks/months needed for a meaningful sample. A real fix
+exists, but it's a substantially bigger lift: NOAA's `noaa-nbm-pds` S3
+bucket does contain long-term archived data, but as GRIB2 (binary
+gridded) files, not the text bulletins this bot reads. Using it would mean:
+  - Downloading and parsing GRIB2 files (`cfgrib`/`eccodes` or similar)
+  - Finding the nearest gridpoint to each station (not just reading a
+    pre-computed station bulletin)
+  - Extracting the correct percentile-equivalent fields from the grid
+
+**Priority:** low — a meaningful engineering lift relative to the value
+for a $50-budget side project. Paper trading is the practical source of
+truth for now. Worth reconsidering only if paper-trading results are
+promising enough to justify deeper validation before scaling up.
+
+---
+
+## Decisions (things considered and deliberately not done)
+
+**Dropped the backtest feature entirely (this round).** After finding
+that NOAA doesn't retain the needed forecast bulletin archive beyond
+about a week for free, and that the best available substitute (a
+university-run archive) only guarantees roughly the same window, the
+feature's original value proposition — a fast historical read before
+waiting weeks for paper trades — wasn't achievable as designed. Rather
+than ship a narrowed-down "last week only" version, it was removed
+outright; paper trading is now the sole validation path. See item #5
+above if this gets revisited later.
+
+---
+
 ## Log of resolved issues (for context, not action)
 
 **From v1 setup (GitHub/workflow mechanics):**
