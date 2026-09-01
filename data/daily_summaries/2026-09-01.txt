@@ -1,7 +1,7 @@
 === Predict Weather Bot — Daily Summary: 2026-09-01 ===
 Mode: PAPER
 
-Scans run today: 4
+Scans run today: 6
 
 New positions opened today: 0
 
