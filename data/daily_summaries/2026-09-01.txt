@@ -1,0 +1,18 @@
+=== Predict Weather Bot — Daily Summary: 2026-09-01 ===
+Mode: PAPER
+
+Scans run today: 4
+
+New positions opened today: 0
+
+Positions settled today: 0
+
+Net P&L settled today: $+0.00
+Total currently deployed (open positions): $0.00 of $50.00 budget
+Open positions right now: 0
+
+Last 14 days (daily P&L):      ▅▅▅▅▅▅▅▅▅▅▅▅▅▅
+Last 14 days (cumulative P&L): ▅▅▅▅▅▅▅▅▅▅▅▅▅▅
+  (range: $+0.00 to $+0.00 daily, cumulative now $+0.00)
+
+This is all simulated — no real money is at risk. Once these numbers look sane over a couple of weeks, consider switching config.yaml's `mode` to 'live' with your small risk capital.
